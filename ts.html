@@ -1,0 +1,231 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+    <title>SocketIO Test!!</title>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <style type="text/css">
+
+        @media screen and (max-width:1152px){
+            .widther {width:80% !important;}
+        }
+        .widther {
+            width: 45%; 
+        }
+		input {
+			margin-right: 8px;
+        }
+        body {
+            height: 98vh;
+        }
+    </style>
+    <script src="http://code.jquery.com/jquery-1.12.4.min.js" integrity="sha256-ZosEbRLbNQzLpnKIkEdrPv7lOy9C27hHQ+Xp8a4MxAQ=" crossorigin="anonymous"></script>
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/socket.io/2.2.0/socket.io.js" integrity="sha256-yr4fRk/GU1ehYJPAs8P4JlTgu0Hdsp4ZKrx8bDEDC3I=" crossorigin="anonymous"></script>
+    <script type="text/javascript" charset="utf-8">
+        function getNowTime() {
+            function adc(num) {
+                if (num < 10) {
+                    num = '0' + num
+                }
+                return num;
+            }
+            var myDate = new Date();
+            var nowTime = myDate.getFullYear() + '-' + adc(myDate.getMonth()+1) + '-' + adc(myDate.getDate()) + ' ' + adc(myDate.getHours()) + ':' + adc(myDate.getMinutes()) + ':' + adc(myDate.getSeconds()) + '.' + myDate.getMilliseconds();
+            return nowTime;
+        }
+
+        $(document).ready(function() {
+
+            $('#test_ground :input').attr('disabled', true);
+            var namespace = '/test';
+            var flag = false;
+            var myid = '无连接';
+            var ping_pong_times = [];
+            var start_time;
+            var osuid = '';
+            var token = '';
+            var socket = io('http://127.0.0.1:9530' + namespace, {
+                query: {
+                    'osuid': osuid,
+                    'otsu_token': token
+                }
+            });
+            
+
+            window.setInterval(function() {
+                start_time = (new Date).getTime();
+                socket.emit('otServer_stat');
+            }, 1000);
+
+
+            socket.on('otClient_connected', function() {
+                flag = true
+				myid = socket.id.split('#')[1];
+				$('#connection_id').text(myid);
+                $('#permission :input').attr('disabled', true);
+                $('#test_ground :input').removeAttr('disabled');
+                $('#connection_status').text('（已连接）').css('color', 'green');
+                $('#connect_button').val('断开连接').attr('disabled', false);
+                socket.emit('otServer_msg', {data: '客户端连接成功'});
+            });
+
+
+            
+            socket.on('disconnect', function() {
+                flag = false
+                $('#permission :input').removeAttr('disabled');
+                $('#test_ground :input').attr('disabled', true);
+                $('#connect_button').val('重新连接').attr('disabled', false);
+                $('#ping-pong').text('已断开');
+                $('#online_count').text('已断开');
+                $('#connection_id').text(myid+'（已断开）');
+                $('#connection_status').text('（已断开）').css('color', 'red');
+                $('#log').append('<br>' + $('<div/>').text('[' + getNowTime() + ']：' + '您已断开服务器。').html());
+                $('#log').animate({scrollTop:scrollHeight}, 300);
+              });
+
+            socket.on('otClient_msg', function(data, cb) {
+                $('#log').append('<br>' + $('<div/>').text('[' + getNowTime() + ']：从用户：'+data.from+ '收到消息：' + data.msg+'；连接：'+ data.from_conn).html());
+                if (cb) { cb('客户端已完成回调任务，向服务端发送工作证明。'); };
+                var scrollHeight = $('#log').prop("scrollHeight");
+                $('#log').animate({scrollTop:scrollHeight}, 300);
+
+            });
+
+            socket.on('otServer_msg', function(data, cb) {
+                $('#log').append('<br>' + $('<div/>').text('[' + getNowTime() + ']：' + data.msg).html());
+                if (cb) { cb('客户端已完成回调任务，向服务端发送工作证明。'); };
+                var scrollHeight = $('#log').prop("scrollHeight");
+                $('#log').animate({scrollTop:scrollHeight}, 300);
+
+            });
+
+            socket.on('otServer_stat', function(data) {
+                if (data.c) { $('#online_count').text(data.c) };
+                if (data.u) { $('#user_count').text(data.u) };
+                if (data.r) { $('#user_list').text(data.r) };
+                if (data.t) { $('#room_list').text(data.t) };
+                var latency = (new Date).getTime() - start_time;
+                ping_pong_times.push(latency);
+                ping_pong_times = ping_pong_times.slice(-30);
+                var sum = 0;
+                for (var i = 0; i < ping_pong_times.length; i++)
+                    sum += ping_pong_times[i];
+                $('#ping-pong').text((Math.round(10 * sum / ping_pong_times.length) / 10) + 'ms');
+            });
+
+            $('form#emit').submit(function(event) {
+                socket.emit('otClient_sendServerMessage', {message: $('#emit_data').val()});
+                return false;
+            });
+            $('form#broadcast').submit(function(event) {
+                socket.emit('otClient_broadcastMessage', {message: $('#broadcast_data').val()});
+                return false;
+            });
+            $('form#join').submit(function(event) {
+                socket.emit('otClient_joinRoom', {room: $('#join_room').val()});
+                return false;
+            });
+            $('form#leave').submit(function(event) {
+                socket.emit('otClient_leaveRoom', {room: $('#leave_room').val()});
+                return false;
+            });
+            $('form#send_room').submit(function(event) {
+                socket.emit('otClient_sendRoomMessage', {room: $('#room_name').val(), message: $('#room_data').val()});
+                return false;
+            });
+            $('form#close').submit(function(event) {
+                socket.emit('otClient_closeRoom', {room: $('#close_room').val()});
+                return false;
+            });
+            $('form#disconnect').submit(function(event) {
+                if (flag === true) {
+                    flag = false;
+                    $('#connect_button').val('重新连接');
+                    $('#ping-pong').text('已断开');
+                    $('#online_count').text('已断开');
+                    $('#connection_id').text(myid+'（已断开）');
+                    $('#connection_status').text('（已断开）').css('color', 'red');
+                    $('#test_ground :input').attr('disabled', true);
+                    $('#permission :input').removeAttr('disabled');
+                    socket.emit('otClient_disconnet');
+                } else {
+                    osuid = $('#osuid').val();
+                    token = $('#token').val();
+                    flag = true;
+                    $('#permission :input').attr('disabled', true)
+                    $('#connection_status').text('（正在连接...）').css('color', 'black');
+                    $('#connect_button').val('连接中').attr('disabled', true);
+                    $('#ping-pong').text('测速中');
+                    $('#online_count').text('拉取中');
+                    $('#connect_button').val('断开连接').attr('disabled', false);
+                    $('#test_ground :input').attr('disabled', true);
+                    socket.io.opts.query = {'osuid': osuid, 'otsu_token': token};
+                    socket.open();
+                };
+                return false;
+            });
+        });
+    </script>
+</head>
+<body>
+    <div style="display: flex; justify-content: space-around; width: 100%; height: 100%; flex-wrap: wrap;">
+        <div style="margin-top: 20px; background-color: #F1F1F1; padding: 20px 30px; width: 45%; height: 100%;" class="widther">
+            <h1>SocketIO 测试<span id="connection_status">（正在连接...）</span></h1>
+            <p>平均延迟：<b><span id="ping-pong">测速中</span></b></p>
+            <p>连接数：<b><span id="online_count">拉取中</span></b></p>
+            <p>用户数：<b><span id="user_count">拉取中</span></b></p>
+            <p>用户列表：<b><span id="user_list">拉取中</span></b></p>
+            <p>聊天房间列表：<b><span id="room_list">拉取中</span></b></p>
+            <p>连接id：<b><span id="connection_id">无连接</span></b></p>
+            <h2>鉴权:</h2>
+            
+            <div id="permission">
+                <input style="padding: 8px 14px;" type="text" placeholder="osuid" id="osuid">
+                <input style="padding: 8px 14px;" type="text" placeholder="otsuToken" id="token">
+            </div>
+            <div style="font-size: 14px; color: gray; margin-top: 15px;">(测试id：940857703，测试token：test_token)</div>
+            <h2>测试:</h2>
+            <div id="test_ground">
+                <form id="emit" method="POST" action='#'>
+                    <input style="padding: 8px 14px;" type="text" name="emit_data" id="emit_data" placeholder="消息内容">
+                    <input style="padding: 8px 14px;" type="submit" value="发送消息到服务器">
+                </form>
+                <br>
+                <form id="broadcast" method="POST" action='#'>
+                    <input style="padding: 8px 14px;" type="text" name="broadcast_data" id="broadcast_data" placeholder="消息内容">
+                    <input style="padding: 8px 14px;" type="submit" value="发送广播到所有连接">
+                </form>
+                <br>
+                <form id="join" method="POST" action='#'>
+                    <input style="padding: 8px 14px;" type="text" name="join_room" id="join_room" placeholder="房间名">
+                    <input style="padding: 8px 14px;" type="submit" value="加入/创建房间">
+                </form>
+                <br>
+                <form id="leave" method="POST" action='#'>
+                    <input style="padding: 8px 14px;" type="text" name="leave_room" id="leave_room" placeholder="房间名">
+                    <input style="padding: 8px 14px;" type="submit" value="离开房间">
+                </form>
+                <br>
+                <form id="send_room" method="POST" action='#'>
+                    <input style="padding: 8px 14px;" type="text" name="room_name" id="room_name" placeholder="房间名">
+                    <input style="padding: 8px 14px;" type="text" name="room_data" id="room_data" placeholder="消息内容">
+                    <input style="padding: 8px 14px;" type="submit" value="发送消息到房间">
+                </form>
+                <br>
+                <form id="close" method="POST" action="#">
+                    <input style="padding: 8px 14px;" type="text" name="close_room" id="close_room" placeholder="房间名">
+                    <input style="padding: 8px 14px;" type="submit" value="关闭房间">
+                </form>
+                <br>
+            </div>
+            <form id="disconnect" method="POST" action="#">
+                <input id="connect_button" disabled style="padding: 8px 14px;" type="submit" value="连接中">
+            </form>
+        </div>
+        <div style="margin-top: 20px; background-color: #F1F1F1; padding: 20px 30px; height: 100%;" class="widther">
+            <h2>服务器消息:</h2>
+            <div id="log" style="height: 90%; overflow: auto; word-wrap: break-word;"></div>
+        </div>
+    </div>
+</body>
+</html>
