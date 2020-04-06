@@ -42,6 +42,16 @@ def authorizer(osuid, token):
     return re, status
 
 
+def serviceAuthorizer(serviceid, key):
+    fake = [{'serviceid': '1', 'key': '7355608'}]
+    re, status = None, -1
+    if serviceid not in (None, '') and key not in (None, ''):
+        for i in fake:
+            if i['serviceid'] == serviceid and i['key'] == key:
+                status = 1
+                re = {'service_name': '小喵bot', 'service_info': '测试服务'}
+    return re, status
+
 
 @utils.messager
 #@authorizeGuard(needLevel=90)

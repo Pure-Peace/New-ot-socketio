@@ -14,6 +14,10 @@ from flask import request, copy_current_request_context
 from flask_socketio import SocketIO, emit, join_room, leave_room, close_room, rooms, disconnect
 from initial import app
 
+
+# initial socketio server
+server = SocketIO(app, async_mode='eventlet', cors_allowed_origins='*')
+
 connections = []
 disconnections = []
 createdRooms = {}
@@ -22,25 +26,24 @@ indexByConnectId = {}
 indexByOsuid = {}
 
 
-# initial socketio server
-server = SocketIO(app, async_mode='eventlet', cors_allowed_origins='*')
-
-
 def logger(text):
     print(f'[{utils.getTime(1)}]：{text}')
 
 
-def getOsuid(connectId):
+def getConnect(connectId, need='osuid'):
     data = indexByConnectId.get(connectId)
-    if data != None: data = data.get('osuid')
+    if data != None: 
+        if need != 'all':
+            data = data.get(need)
     return data
 
 
-def handleConnect(osuid, request):
+def handleConnect(osuid, nick, request):
     connectid = request.sid
     data = {
         'osuid': osuid,
-        'connectid': connectid,
+        'nick': nick,
+        'connect_id': connectid,
         'ip': request.remote_addr,
         'user_agent': str(request.user_agent),
         'create_time': utils.getTime(1)
@@ -53,7 +56,20 @@ def handleConnect(osuid, request):
         indexByOsuid[osuid] = [data]
     join_room(osuid, sid=connectid, namespace='/test')
     logger(rooms(connectid, namespace='/test'))
-    logger(f'connection：{connectid} authenticated and joined to the session, <by(user): {osuid}> .')
+    logger(f'[{connectid}] user({osuid}) connected.')
+
+
+def handleConnect2(serviceid, data, request):
+    connectid = request.sid
+    data['service_id'] = serviceid
+    data['connect_id'] = connectid
+    data['ip'] = request.remote_addr
+    data['create_time'] = utils.getTime(1)
+    connections.append(data)
+    indexByConnectId[connectid] = data
+    join_room(serviceid, sid=connectid, namespace='/service')
+    logger(rooms(connectid, namespace='/service'))
+    logger(f'[{connectid}] service({serviceid}) connected.')
 
 
 def roomNotExists(room):
@@ -65,7 +81,7 @@ def roomNotExists(room):
 
 def handelDisconnect(connectid):
     for i in range(len(connections)):
-        if connections[i].get('connectid') == connectid:
+        if connections[i].get('connect_id') == connectid:
             osuid = connections[i].get('osuid')
             disconnections.append(connections[i])
             del(connections[i])
@@ -73,8 +89,18 @@ def handelDisconnect(connectid):
 
     del(indexByConnectId[connectid])
     del(indexByOsuid[osuid])
-    logger(f'connection：{connectid} has disconnected the server, <by(user): {osuid}> .')
+    logger(f'[{connectid}] user({osuid}) disconnected.')
 
+
+def handelDisconnect2(connectid):
+    for i in range(len(connections)):
+        if connections[i].get('connect_id') == connectid:
+            serviceid = connections[i].get('service_id')
+            disconnections.append(connections[i])
+            del(connections[i])
+            break
+
+    logger(f'[{connectid}] service({serviceid}) disconnected.')
 
 
 def apiSendBroadcast(data='', text='', action=''):
@@ -99,7 +125,7 @@ def apiSendRoom(target='', data='', text='', action=''):
 @server.on('otClient_sendServerMessage', namespace='/test')
 def reciveClientMessage(data):
     message = data.get('message')
-    osuid = getOsuid(request.sid)
+    osuid = getConnect(request.sid)
 
     logger(f'connection: {request.sid}：server recive message from {osuid} <ip: {request.remote_addr}>; text: {message if len(message) <= 300 else message[300]+"..."}.')
 
@@ -108,7 +134,7 @@ def reciveClientMessage(data):
 
 @server.on('otClient_broadcastMessage', namespace='/test')
 def clientBroadcastMessage(data):
-    osuid = getOsuid(request.sid)
+    osuid = getConnect(request.sid)
     message = data.get('message')
 
     logger(f'connection：{request.sid}：client trying to broadcast, by {osuid} <ip: {request.remote_addr}>; text: {message if len(message) <= 300 else message[300]+"..."}.')
@@ -124,7 +150,7 @@ def clientBroadcastMessage(data):
 @server.on('otClient_joinRoom', namespace='/test')
 def clientJoinRoom(data):
     room = data.get('room')
-    osuid = getOsuid(request.sid)
+    osuid = getConnect(request.sid)
 
     logger(f'connection: {request.sid}： tries to join room: {room} <ip: {request.remote_addr}> <by user: {osuid}>.')
 
@@ -148,7 +174,7 @@ def clientLeaveRoom(data):
         logger('success')
 
     room = data.get('room')
-    osuid = getOsuid(request.sid)
+    osuid = getConnect(request.sid)
 
     if room in (None, '') or osuid in (None, ''):
         emit('otServer_msg', {'msg': '离开房间失败，信息不完整。'})
@@ -169,7 +195,7 @@ def clientCloseRoom(data):
         logger('done')
 
     room = data.get('room')
-    osuid = getOsuid(request.sid)
+    osuid = getConnect(request.sid)
 
     if room in (None, '') or osuid in (None, ''):
         emit('otServer_msg', {'msg': '关闭房间失败：信息不完整。'})
@@ -187,7 +213,8 @@ def clientSendRoomMessage(data):
         logger(f'[status] message sent {"successfully" if re == 1 else "failed"}.')
 
     room = data.get('room')
-    osuid = getOsuid(request.sid)
+    connectInfo = getConnect(request.sid, 'all')
+    osuid, nick = connectInfo.get('osuid'), connectInfo.get('nick')
     text = data.get('message')
 
     logger(f'connection: {request.sid}：tries to send a message to room {room} <ip: {request.remote_addr}> <by user: {osuid}>; text: text.')
@@ -205,7 +232,7 @@ def clientSendRoomMessage(data):
             return -1
 
         logger(f'connection: {request.sid} try to sends a message to target: {room}')
-        emit('otClient_msg', {'msg': text, 'from': osuid, 'from_conn': request.sid}, room=room, callback=sendMsgStatus)
+        emit('otClient_msg', {'msg': text, 'from': osuid, 'nick': nick, 'from_conn': request.sid}, room=room, callback=sendMsgStatus)
         return 1
 
 
@@ -231,28 +258,62 @@ def serverMyStatus():
 
 @server.on('connect', namespace='/test')
 def serverConnect():
-    logger(f'connection: {request.sid}：a connection request has been received, the upcoming user authentication <ip: {request.remote_addr}>.')
+    logger(f'[{request.sid}] try to connect user. do authentication <ip: {request.remote_addr}>.')
 
     osuid = request.args.get('osuid')
     token = request.args.get('otsu_token')
     re, status = core.authorizer(osuid, token)
     if status == 1:
-        handleConnect(osuid, request)
+        reData = re.get('data')
+        if reData not in (None, ''): nick = reData.get('osuname')
+        else: nick = '未知'
+        handleConnect(osuid, nick, request)
         emit('otClient_connected', {'connection': request.sid, 'osuid': osuid})
         emit('otServer_msg', {'msg': f'user：{osuid}，您已经成功连接服务器。'})
     else:
-        logger(f'connection: {request.sid}：user authentication failed, connection request was rejected <ip: {request.remote_addr}>.')
+        logger(f'[{request.sid}] user({osuid}) authentication failed, rejected.')
         disconnect()
-        logger('success')
+        logger('disconnet success')
 
 
 
+@server.on('connect', namespace='/service')
+def serverConnect2():
+    logger(f'[{request.sid}] try to connect service. do authentication <ip: {request.remote_addr}>.')
+    serviceid = request.args.get('service_id')
+    key = request.args.get('key')
+    re, status = core.serviceAuthorizer(serviceid, key)
+    if status == 1:
+        handleConnect2(serviceid, re, request)
+        servicename = re.get('service_name')
+        emit('otClient_connected', {
+            'connection': request.sid, 
+            'service_id': serviceid, 
+            'service_name': servicename,
+            'service_info': re.get('service_info')
+            }
+        )
+        emit('otServer_msg', {'msg': f'service：{servicename}({serviceid})，您已经成功连接到中间api。'})
+    else:
+        logger(f'[{request.sid}] service({serviceid}) authentication failed, rejected.')
+        disconnect()
+        logger('disconnet success')
+
+
+@server.on('disconnect', namespace='/service')
+def serverDisconnect2():
+    logger(f'[{request.sid}] disconnect.')
+    try:
+        handelDisconnect2(request.sid)
+    except:
+        pass
+    emit('otServer_msg', {'msg': f'您已经从服务器断开连接。'})
 
 
 
 @server.on('disconnect', namespace='/test')
 def serverDisconnect():
-    logger(f'connection: {request.sid} disconnect.')
+    logger(f'[{request.sid}] disconnect.')
     try:
         handelDisconnect(request.sid)
     except:
